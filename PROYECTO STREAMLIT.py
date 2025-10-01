@@ -67,12 +67,14 @@ def capturar_frame_rtsp(rtsp_url, roi=None, timeout=10):
     """
     cap = None
     try:
-        # Intentar diferentes backends
+        # Configurar timeout a nivel de OpenCV si es posible
+        os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;udp|timeout;10000000'
+        
+        # Crear VideoCapture con backend FFMPEG
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
         
         # Configuración optimizada para RTSP
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_TIMEOUT, timeout * 1000)  # timeout en ms
         
         if not cap.isOpened():
             return None, "No se pudo conectar a la cámara RTSP. Verifica la URL y credenciales."
@@ -642,3 +644,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

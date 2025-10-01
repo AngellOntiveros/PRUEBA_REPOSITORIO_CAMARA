@@ -17,110 +17,102 @@ import json
 from collections import defaultdict, deque
 import zipfile
 from io import BytesIO
-import requests
 
 # ----------------------------
-# SISTEMA ROBUSTO DE DESCARGA DE MODELOS
+# CONFIGURACIÓN MEJORADA DE DESCARGAS
 # ----------------------------
-def descargar_modelo_seguro(url, nombre_archivo):
-    """Descargar modelo con múltiples métodos de respaldo"""
-    st.info(f"📥 Intentando descargar {nombre_archivo}...")
+def verificar_archivo_modelo(nombre_archivo):
+    """Verificar que el archivo existe y tiene tamaño adecuado"""
+    if not os.path.exists(nombre_archivo):
+        return False, "No existe"
     
-    # Método 1: gdown (principal)
+    tamaño = os.path.getsize(nombre_archivo)
+    if tamaño < 1000000:  # Menos de 1MB = corrupto
+        return False, f"Archivo corrupto ({tamaño} bytes)"
+    
+    return True, f"OK ({tamaño // 1000000}MB)"
+
+def descargar_modelo_directo(url, output):
+    """Descargar modelo con método directo"""
     try:
-        st.write("🔄 Usando gdown...")
-        gdown.download(url, nombre_archivo, quiet=False)
-        if os.path.exists(nombre_archivo) and os.path.getsize(nombre_archivo) > 1000000:  # >1MB
-            st.success(f"✅ {nombre_archivo} descargado con gdown")
+        # Método 1: gdown directo
+        gdown.download(url, output, quiet=False, fuzzy=True)
+        return True
+    except Exception as e:
+        st.warning(f"Intento 1 falló: {e}")
+        try:
+            # Método 2: gdown con formato alternativo
+            file_id = url.split('id=')[1] if 'id=' in url else url
+            download_url = f"https://drive.google.com/uc?id={file_id}"
+            gdown.download(download_url, output, quiet=False)
             return True
-    except Exception as e:
-        st.warning(f"⚠️ gdown falló: {e}")
-    
-    # Método 2: requests (respaldo)
-    try:
-        st.write("🔄 Usando requests...")
-        response = requests.get(url, stream=True)
-        if response.status_code == 200:
-            with open(nombre_archivo, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            if os.path.exists(nombre_archivo):
-                st.success(f"✅ {nombre_archivo} descargado con requests")
-                return True
-    except Exception as e:
-        st.warning(f"⚠️ requests falló: {e}")
-    
-    # Método 3: URL alternativa
-    try:
-        st.write("🔄 Probando URL alternativa...")
-        # Convertir URL de Google Drive a formato directo
-        file_id = url.split('id=')[1] if 'id=' in url else url.split('/')[-1]
-        direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
-        
-        session = requests.Session()
-        response = session.get(direct_url, stream=True)
-        
-        # Manejar confirmación de archivos grandes
-        for key, value in response.cookies.items():
-            if 'download_warning' in key:
-                direct_url = f"https://drive.google.com/uc?export=download&confirm={value}&id={file_id}"
-                response = session.get(direct_url, stream=True)
-                break
-        
-        with open(nombre_archivo, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-        
-        if os.path.exists(nombre_archivo) and os.path.getsize(nombre_archivo) > 1000000:
-            st.success(f"✅ {nombre_archivo} descargado con URL alternativa")
-            return True
-    except Exception as e:
-        st.warning(f"⚠️ URL alternativa falló: {e}")
-    
-    return False
+        except Exception as e2:
+            st.error(f"Intento 2 falló: {e2}")
+            return False
 
 @st.cache_resource
-def cargar_modelo_frutas():
-    """Cargar modelo de frutas con sistema robusto"""
-    modelo_path = "w_best.pt"
-    url = "https://drive.google.com/uc?id=16BNxvPRSwUQEKULlgKhG2jRUyUNnSApu"
+def inicializar_modelos():
+    """Inicializar todos los modelos con verificación robusta"""
     
-    # Verificar si el modelo existe y es válido
-    if not os.path.exists(modelo_path) or os.path.getsize(modelo_path) < 1000000:
-        st.warning("🔄 Modelo de frutas no encontrado o corrupto, descargando...")
-        if not descargar_modelo_seguro(url, modelo_path):
-            st.error("❌ No se pudo descargar el modelo de frutas")
-            return None
+    modelos_info = {
+        "frutas": {
+            "path": "w_best.pt", 
+            "url": "https://drive.google.com/uc?id=16BNxvPRSwUQEKULlgKhG2jRUyUNnSApu"
+        },
+        "placas": {
+            "path": "W_PLACA.pt", 
+            "url": "https://drive.google.com/uc?id=12KSiZvxS262NPQ1s-hdsOxJliHSMS3tS"
+        }
+    }
     
-    try:
-        modelo = YOLO(modelo_path)
-        st.success("✅ Modelo de frutas cargado correctamente")
-        return modelo
-    except Exception as e:
-        st.error(f"❌ Error cargando modelo de frutas: {e}")
-        return None
-
-@st.cache_resource
-def cargar_modelo_placas():
-    """Cargar modelo de placas con sistema robusto"""
-    modelo_path = "W_PLACA.pt"
-    url = "https://drive.google.com/uc?id=12KSiZvxS262NPQ1s-hdsOxJliHSMS3tS"
+    modelos_cargados = {}
     
-    # Verificar si el modelo existe y es válido
-    if not os.path.exists(modelo_path) or os.path.getsize(modelo_path) < 1000000:
-        st.warning("🔄 Modelo de placas no encontrado o corrupto, descargando...")
-        if not descargar_modelo_seguro(url, modelo_path):
-            st.error("❌ No se pudo descargar el modelo de placas")
-            return None
+    for nombre, info in modelos_info.items():
+        archivo = info["path"]
+        url = info["url"]
+        
+        st.write(f"**Verificando {nombre}...**")
+        
+        # Verificar si el archivo ya existe y es válido
+        existe, mensaje = verificar_archivo_modelo(archivo)
+        
+        if existe:
+            st.success(f"✅ {archivo} - {mensaje}")
+            try:
+                modelo = YOLO(archivo)
+                modelos_cargados[nombre] = modelo
+                st.success(f"✅ Modelo {nombre} cargado correctamente")
+            except Exception as e:
+                st.error(f"❌ Error cargando {archivo}: {e}")
+                # Intentar re-descargar
+                st.info("🔄 Intentando re-descargar...")
+                if descargar_modelo_directo(url, archivo):
+                    try:
+                        modelo = YOLO(archivo)
+                        modelos_cargados[nombre] = modelo
+                        st.success(f"✅ Modelo {nombre} cargado después de re-descarga")
+                    except Exception as e2:
+                        st.error(f"❌ Error persistente con {archivo}: {e2}")
+        else:
+            st.warning(f"⚠️ {archivo} - {mensaje}")
+            st.info("📥 Descargando...")
+            
+            if descargar_modelo_directo(url, archivo):
+                # Verificar descarga
+                existe_descarga, mensaje_descarga = verificar_archivo_modelo(archivo)
+                if existe_descarga:
+                    try:
+                        modelo = YOLO(archivo)
+                        modelos_cargados[nombre] = modelo
+                        st.success(f"✅ Modelo {nombre} descargado y cargado")
+                    except Exception as e:
+                        st.error(f"❌ Error cargando {archivo} después de descarga: {e}")
+                else:
+                    st.error(f"❌ Descarga falló: {mensaje_descarga}")
+            else:
+                st.error(f"❌ No se pudo descargar {archivo}")
     
-    try:
-        modelo = YOLO(modelo_path)
-        st.success("✅ Modelo de placas cargado correctamente")
-        return modelo
-    except Exception as e:
-        st.error(f"❌ Error cargando modelo de placas: {e}")
-        return None
+    return modelos_cargados
 
 # Diccionario para caracteres de placas
 ID_TO_CHAR = {
@@ -133,35 +125,6 @@ ID_TO_CHAR = {
     30: 'U', 31: 'V', 32: 'W', 33: 'X', 34: 'Y',
     35: 'Z', 36: 'placa'
 }
-
-# ----------------------------
-# CONFIGURACIÓN DE LA APLICACIÓN
-# ----------------------------
-def init_session_state():
-    """Inicializar variables de sesión"""
-    defaults = {
-        "imagen_actual": None,
-        "detecciones_historial": [],
-        "resultado_actual": None,
-        "texto_placa_actual": "",
-        "recortes_placas": [],
-        "rtsp_url": "",
-        "roi_coords": None,
-        "modelos_cargados": False
-    }
-    
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-def configurar_pagina():
-    """Configurar página de Streamlit"""
-    st.set_page_config(
-        page_title="🌴🚗 Sistema Dual CNN",
-        page_icon="🔬",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
 
 # ----------------------------
 # CLASE DE TRACKING
@@ -306,6 +269,35 @@ def extraer_recorte_placa(frame, bbox, padding=15):
     return recorte
 
 # ----------------------------
+# CONFIGURACIÓN DE LA APLICACIÓN
+# ----------------------------
+def init_session_state():
+    """Inicializar variables de sesión"""
+    if "imagen_actual" not in st.session_state:
+        st.session_state.imagen_actual = None
+    if "detecciones_historial" not in st.session_state:
+        st.session_state.detecciones_historial = []
+    if "resultado_actual" not in st.session_state:
+        st.session_state.resultado_actual = None
+    if "texto_placa_actual" not in st.session_state:
+        st.session_state.texto_placa_actual = ""
+    if "tracker" not in st.session_state:
+        st.session_state.tracker = SimpleTracker(max_age=30)
+    if "recortes_placas" not in st.session_state:
+        st.session_state.recortes_placas = []
+    if "modelos_inicializados" not in st.session_state:
+        st.session_state.modelos_inicializados = False
+
+def configurar_pagina():
+    """Configurar página de Streamlit"""
+    st.set_page_config(
+        page_title="🌴🚗 Sistema Dual CNN",
+        page_icon="🔬",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+# ----------------------------
 # INTERFAZ PRINCIPAL
 # ----------------------------
 def main():
@@ -315,109 +307,74 @@ def main():
     st.title("🔬 Sistema Dual CNN - Detección Inteligente")
     st.markdown("Sistema de detección con dos redes neuronales especializadas")
     
-    # PANEL DE CONTROL DE MODELOS
-    st.sidebar.header("🔧 Panel de Control de Modelos")
+    # PANEL DE INICIALIZACIÓN
+    st.sidebar.header("🚀 Inicialización del Sistema")
     
-    # Verificar estado de modelos
-    col1, col2 = st.sidebar.columns(2)
-    
-    with col1:
-        if st.button("🔄 Verificar Modelos", use_container_width=True):
-            st.rerun()
-    
-    with col2:
-        if st.button("🗑️ Limpiar Cache", use_container_width=True):
-            try:
-                # Limpiar cache de modelos
-                cargar_modelo_frutas.clear()
-                cargar_modelo_placas.clear()
-                st.success("Cache limpiado")
-                st.rerun()
-            except:
-                st.rerun()
-    
-    # Mostrar estado de modelos
-    st.sidebar.subheader("📊 Estado de Modelos")
-    
-    modelo_frutas_ok = os.path.exists("w_best.pt") and os.path.getsize("w_best.pt") > 1000000
-    modelo_placas_ok = os.path.exists("W_PLACA.pt") and os.path.getsize("W_PLACA.pt") > 1000000
-    
-    if modelo_frutas_ok:
-        st.sidebar.success("✅ Frutas: w_best.pt")
-    else:
-        st.sidebar.error("❌ Frutas: Faltante")
-    
-    if modelo_placas_ok:
-        st.sidebar.success("✅ Placas: W_PLACA.pt")
-    else:
-        st.sidebar.error("❌ Placas: Faltante")
-    
-    # CARGAR MODELOS
-    if not modelo_frutas_ok or not modelo_placas_ok:
-        st.warning("⚠️ Algunos modelos no están disponibles")
+    if not st.session_state.modelos_inicializados:
+        st.info("🔄 **Inicializando modelos...**")
         
-        if st.button("🚀 Descargar Modelos Automáticamente"):
-            with st.spinner("Descargando modelos..."):
-                # Descargar ambos modelos
-                modelo_frutas = cargar_modelo_frutas()
-                modelo_placas = cargar_modelo_placas()
-                
-                if modelo_frutas and modelo_placas:
-                    st.success("🎉 Todos los modelos cargados correctamente!")
-                    st.session_state.modelos_cargados = True
-                    st.rerun()
-                else:
-                    st.error("❌ No se pudieron cargar todos los modelos")
-    
-    else:
-        # Cargar modelos si existen
-        with st.spinner("🔄 Cargando modelos YOLO..."):
-            modelo_frutas = cargar_modelo_frutas()
-            modelo_placas = cargar_modelo_placas()
+        with st.spinner("Cargando modelos YOLO..."):
+            modelos = inicializar_modelos()
             
-            if modelo_frutas and modelo_placas:
-                st.session_state.modelos_cargados = True
+            if "frutas" in modelos and "placas" in modelos:
+                st.session_state.modelo_frutas = modelos["frutas"]
+                st.session_state.modelo_placas = modelos["placas"]
+                st.session_state.modelos_inicializados = True
+                st.success("🎉 ¡Sistema inicializado correctamente!")
+                st.rerun()
             else:
-                st.error("❌ Error crítico cargando modelos")
-                st.stop()
+                st.error("❌ No se pudieron cargar todos los modelos")
+                
+                # Mostrar solución paso a paso
+                st.markdown("""
+                ### 🔧 Solución Manual:
+                
+                1. **Abre una terminal en la carpeta de tu proyecto**
+                2. **Ejecuta estos comandos:**
+                ```bash
+                # Navega a tu carpeta del proyecto
+                cd /ruta/a/tu/proyecto
+                
+                # Elimina archivos problemáticos
+                rm -f w_best.pt W_PLACA.pt
+                
+                # Descarga manualmente
+                gdown "https://drive.google.com/uc?id=16BNxvPRSwUQEKULlgKhG2jRUyUNnSApu" -O w_best.pt
+                gdown "https://drive.google.com/uc?id=12KSiZvxS262NPQ1s-hdsOxJliHSMS3tS" -O W_PLACA.pt
+                
+                # Verifica que se descargaron
+                ls -la *.pt
+                ```
+                3. **Recarga esta página**
+                """)
+                
+                if st.button("🔄 Reintentar Inicialización"):
+                    st.rerun()
+                
+                return
     
-    # Si los modelos no están cargados, mostrar opciones de descarga
-    if not st.session_state.modelos_cargados:
-        st.error("""
-        ❌ **No se pudieron cargar los modelos necesarios**
-        
-        **Opciones de solución:**
-        
-        1. **Haz clic en 'Descargar Modelos Automáticamente'** arriba
-        2. **Descarga manual desde tu terminal:**
-        ```bash
-        # Instalar gdown si no lo tienes
-        pip install gdown requests
-        
-        # Descargar modelos
-        gdown "https://drive.google.com/uc?id=16BNxvPRSwUQEKULlgKhG2jRUyUNnSApu" -O w_best.pt
-        gdown "https://drive.google.com/uc?id=12KSiZvxS262NPQ1s-hdsOxJliHSMS3tS" -O W_PLACA.pt
-        ```
-        3. **Verifica tu conexión a internet**
-        4. **Reinicia la aplicación**
-        """)
-        
-        # Opción para forzar recarga
-        if st.button("🔄 Reintentar Carga"):
-            st.rerun()
-        
-        return
-    
-    # CONTINUAR CON LA APLICACIÓN SI LOS MODELOS ESTÁN CARGADOS
-    st.success("🎉 ¡Sistema listo! Todos los modelos cargados correctamente")
-    
-    # Configuración principal
+    # SIDEBAR CON CONFIGURACIÓN
     st.sidebar.header("⚙️ Configuración")
     confianza = st.sidebar.slider("🎚️ Confianza mínima", 0.0, 1.0, 0.5, 0.01)
     
-    # Inicializar tracker
-    if "tracker" not in st.session_state:
+    # Estado del sistema
+    st.sidebar.subheader("📊 Estado del Sistema")
+    st.sidebar.success("✅ Modelo frutas cargado")
+    st.sidebar.success("✅ Modelo placas cargado")
+    
+    total_detecciones = len(st.session_state.detecciones_historial)
+    st.sidebar.metric("Detecciones totales", total_detecciones)
+    
+    # Botón de limpieza
+    if st.sidebar.button("🗑️ Limpiar Historial", use_container_width=True):
+        st.session_state.detecciones_historial = []
+        st.session_state.resultado_actual = None
+        st.session_state.texto_placa_actual = ""
+        st.session_state.recortes_placas = []
         st.session_state.tracker = SimpleTracker(max_age=30)
+        st.success("Historial limpiado")
+        time.sleep(1)
+        st.rerun()
     
     # INTERFAZ PRINCIPAL CON TABS
     tab1, tab2, tab3 = st.tabs(["📸 Cargar Imagen", "🌴 Detectar Frutas", "🚗 Detectar Placas"])
@@ -473,7 +430,7 @@ def main():
             if st.button("🔍 Detectar Frutas", type="primary", key="btn_frutas", use_container_width=True):
                 with st.spinner("🧠 Analizando frutas..."):
                     img_resultado, detecciones = procesar_imagen_frutas(
-                        modelo_frutas, 
+                        st.session_state.modelo_frutas, 
                         st.session_state.imagen_actual, 
                         confianza
                     )
@@ -498,7 +455,7 @@ def main():
             if st.button("🔍 Detectar Placas", type="primary", key="btn_placas", use_container_width=True):
                 with st.spinner("🧠 Analizando placas con tracking..."):
                     tracks = procesar_frame_con_tracking(
-                        modelo_placas,
+                        st.session_state.modelo_placas,
                         st.session_state.imagen_actual,
                         st.session_state.tracker,
                         confianza
@@ -536,5 +493,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

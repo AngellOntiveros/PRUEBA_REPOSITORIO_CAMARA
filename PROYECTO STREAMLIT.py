@@ -46,7 +46,6 @@ def descargar_y_cargar_modelo_placas():
 # Para RTSP usaremos el mismo modelo de placas
 @st.cache_resource 
 def descargar_y_cargar_modelo_rtsp():
-       """Descargar y cargar modelo de placas"""
     ruta_modelo = "det_placa.pt" 
     if not os.path.exists(ruta_modelo):
         st.info("📥 Descargando modelo de placas...")
@@ -54,7 +53,7 @@ def descargar_y_cargar_modelo_rtsp():
         gdown.download(url, ruta_modelo, quiet=False)
     
     return YOLO(ruta_modelo)
-
+       
 # ----------------------------
 # CLASE DE TRACKING PARA RTSP
 # ----------------------------
@@ -820,4 +819,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 

@@ -1,0 +1,10 @@
+streamlit==1.28.0
+opencv-python==4.8.1.78
+pillow==10.0.1
+numpy==1.24.3
+plotly==5.15.0
+pandas==2.0.3
+ultralytics==8.0.186
+gdown==4.7.1
+torch==2.0.1
+torchvision==0.15.2

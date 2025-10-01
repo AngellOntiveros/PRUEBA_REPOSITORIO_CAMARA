@@ -745,7 +745,7 @@ def main():
                     try:
                         # Inicializar sistema RTSP
                         st.session_state.rtsp_system = RTSPCaptureSystem(
-                            modelo="det_placa.pt",
+                            model_path="det_placa.pt",
                             rtsp_url=rtsp_url,
                             roi=roi
                         )
@@ -963,6 +963,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

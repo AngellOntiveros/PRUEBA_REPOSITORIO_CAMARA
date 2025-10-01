@@ -57,7 +57,7 @@ def descargar_y_cargar_modelo_rtsp():
 # ----------------------------
 # CLASE DE TRACKING PARA RTSP
 # ----------------------------
-lass SimpleTracker:
+class SimpleTracker:
     def __init__(self, max_age=30):
         self.max_age = max_age
         self.tracks = []
@@ -963,6 +963,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

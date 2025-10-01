@@ -47,7 +47,7 @@ def descargar_y_cargar_modelo_placas():
 @st.cache_resource 
 def descargar_y_cargar_modelo_rtsp():
        """Descargar y cargar modelo de placas"""
-    ruta_modelo = "W_PLACA.pt" 
+    ruta_modelo = "det_placa.pt" 
     if not os.path.exists(ruta_modelo):
         st.info("📥 Descargando modelo de placas...")
         url = "https://drive.google.com/uc?id=1MlKp1RDi90XFpz1L3W73kqqhoRnMEdO4"
@@ -820,3 +820,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

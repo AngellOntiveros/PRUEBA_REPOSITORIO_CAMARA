@@ -28,9 +28,20 @@ def descargar_y_cargar_modelo_frutas():
     if not os.path.exists(ruta_modelo):
         st.info("📥 Descargando modelo de frutas...") 
         url = "https://drive.google.com/uc?id=16BNxvPRSwUQEKULlgKhG2jRUyUNnSApu"
-        gdown.download(url, ruta_modelo, quiet=False)
+        try:
+            gdown.download(url, ruta_modelo, quiet=False)
+            st.success("✅ Modelo de frutas descargado correctamente")
+        except Exception as e:
+            st.error(f"❌ Error descargando modelo de frutas: {str(e)}")
+            return None
     
-    return YOLO(ruta_modelo)
+    try:
+        modelo = YOLO(ruta_modelo)
+        st.success("✅ Modelo de frutas cargado correctamente")
+        return modelo
+    except Exception as e:
+        st.error(f"❌ Error cargando modelo de frutas: {str(e)}")
+        return None
 
 @st.cache_resource
 def descargar_y_cargar_modelo_placas():
@@ -39,9 +50,20 @@ def descargar_y_cargar_modelo_placas():
     if not os.path.exists(ruta_modelo):
         st.info("📥 Descargando modelo de placas...")
         url = "https://drive.google.com/uc?id=12KSiZvxS262NPQ1s-hdsOxJliHSMS3tS"
-        gdown.download(url, ruta_modelo, quiet=False)
+        try:
+            gdown.download(url, ruta_modelo, quiet=False)
+            st.success("✅ Modelo de placas descargado correctamente")
+        except Exception as e:
+            st.error(f"❌ Error descargando modelo de placas: {str(e)}")
+            return None
     
-    return YOLO(ruta_modelo)
+    try:
+        modelo = YOLO(ruta_modelo)
+        st.success("✅ Modelo de placas cargado correctamente")
+        return modelo
+    except Exception as e:
+        st.error(f"❌ Error cargando modelo de placas: {str(e)}")
+        return None
 
 # Diccionario para caracteres de placas
 ID_TO_CHAR = {
@@ -131,6 +153,8 @@ def capturar_frame_rtsp(rtsp_url, roi=None):
         if not cap.isOpened():
             return None, "No se pudo conectar a la cámara RTSP"
         
+        # Esperar un momento para que la cámara se inicialice
+        time.sleep(0.1)
         ret, frame = cap.read()
         cap.release()
         
@@ -395,6 +419,57 @@ def crear_grafico_confianza(detecciones, tipo_filtro=None):
     
     return fig
 
+def crear_grafico_temporal(detecciones):
+    """Crear gráfico temporal de detecciones"""
+    if not detecciones:
+        return None
+    
+    df = pd.DataFrame(detecciones)
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df_por_hora = df.groupby([df['timestamp'].dt.hour, 'clase']).size().reset_index(name='cantidad')
+    
+    fig = px.line(
+        df_por_hora,
+        x='timestamp',
+        y='cantidad',
+        color='clase',
+        title="📈 Evolución temporal de detecciones",
+        markers=True
+    )
+    
+    fig.update_layout(
+        xaxis_title="Hora del día",
+        yaxis_title="Cantidad de detecciones",
+        height=400
+    )
+    
+    return fig
+
+# ----------------------------
+# Funciones de utilidad
+# ----------------------------
+def convertir_imagen_a_base64(imagen):
+    """Convertir imagen OpenCV a base64 para descarga"""
+    _, buffer = cv2.imencode('.jpg', imagen)
+    imagen_bytes = buffer.tobytes()
+    return base64.b64encode(imagen_bytes).decode()
+
+def crear_resumen_ejecucion():
+    """Crear resumen de la ejecución actual"""
+    total_frutas = len([d for d in st.session_state.detecciones_historial if d['tipo'] == 'fruta'])
+    total_placas = len([d for d in st.session_state.detecciones_historial if d['tipo'] == 'placa'])
+    
+    resumen = {
+        "fecha": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "total_detecciones": len(st.session_state.detecciones_historial),
+        "frutas_detectadas": total_frutas,
+        "placas_detectadas": total_placas,
+        "recortes_guardados": len(st.session_state.recortes_placas),
+        "confianza_promedio": round(np.mean([d['confianza'] for d in st.session_state.detecciones_historial]), 3) if st.session_state.detecciones_historial else 0
+    }
+    
+    return resumen
+
 # ----------------------------
 # Configuración de la aplicación
 # ----------------------------
@@ -409,7 +484,7 @@ def init_session_state():
     if "texto_placa_actual" not in st.session_state:
         st.session_state.texto_placa_actual = ""
     
-    # NUEVOS: Para RTSP y recortes
+    # Para RTSP y recortes
     if "tracker" not in st.session_state:
         st.session_state.tracker = SimpleTracker(max_age=30)
     if "recortes_placas" not in st.session_state:
@@ -420,6 +495,18 @@ def init_session_state():
         st.session_state.rtsp_url = ""
     if "roi_coords" not in st.session_state:
         st.session_state.roi_coords = None
+    
+    # Nuevas variables para mejor control
+    if "procesamiento_automatico" not in st.session_state:
+        st.session_state.procesamiento_automatico = False
+    if "ultima_placa_detectada" not in st.session_state:
+        st.session_state.ultima_placa_detectada = ""
+    if "estadisticas" not in st.session_state:
+        st.session_state.estadisticas = {
+            "inicio_sesion": datetime.now(),
+            "total_procesamientos": 0,
+            "errores": 0
+        }
 
 def configurar_pagina():
     """Configurar página de Streamlit"""
@@ -442,13 +529,22 @@ def main():
     st.markdown("Sistema de detección con dos redes neuronales especializadas + Captura RTSP")
     
     # Cargar modelos de manera segura
-    try:
-        modelo_frutas = descargar_y_cargar_modelo_frutas()
-        modelo_placas = descargar_y_cargar_modelo_placas()
-        modelos_ok = True
-    except Exception as e:
-        st.error(f"Error cargando modelos: {str(e)}")
-        modelos_ok = False
+    with st.spinner("🔄 Cargando modelos YOLO..."):
+        try:
+            modelo_frutas = descargar_y_cargar_modelo_frutas()
+            modelo_placas = descargar_y_cargar_modelo_placas()
+            
+            if modelo_frutas is None or modelo_placas is None:
+                st.error("❌ No se pudieron cargar uno o ambos modelos. Verifica la conexión a internet.")
+                st.stop()
+                
+            modelos_ok = True
+            st.session_state.estadisticas["total_procesamientos"] += 1
+            
+        except Exception as e:
+            st.error(f"❌ Error crítico cargando modelos: {str(e)}")
+            st.session_state.estadisticas["errores"] += 1
+            modelos_ok = False
     
     if not modelos_ok:
         st.stop()
@@ -460,6 +556,18 @@ def main():
         # Parámetros
         confianza = st.slider("🎚️ Confianza mínima", 0.0, 1.0, 0.5, 0.01)
         
+        # Opciones avanzadas
+        with st.expander("🔧 Opciones avanzadas"):
+            padding_placas = st.slider("📏 Padding recortes placas", 5, 30, 15)
+            max_age_tracking = st.slider("🕒 Máxima edad tracking", 10, 60, 30)
+            st.session_state.tracker.max_age = max_age_tracking
+            
+            # Procesamiento automático
+            st.session_state.procesamiento_automatico = st.checkbox(
+                "🔄 Procesamiento automático RTSP", 
+                value=st.session_state.procesamiento_automatico
+            )
+        
         # Estado del sistema
         st.subheader("📊 Estado del Sistema")
         st.success("✅ Modelo frutas cargado")
@@ -469,19 +577,41 @@ def main():
         st.metric("Detecciones totales", total_detecciones)
         st.metric("Recortes en memoria", len(st.session_state.recortes_placas))
         
-        # Botón de limpieza
-        if st.button("🗑️ Limpiar historial", key="btn_limpiar"):
-            st.session_state.detecciones_historial = []
-            st.session_state.resultado_actual = None
-            st.session_state.texto_placa_actual = ""
-            st.session_state.recortes_placas = []
-            st.session_state.tracker = SimpleTracker(max_age=30)
-            st.success("Historial limpiado")
-            time.sleep(1)
-            st.rerun()
+        # Resumen de estadísticas
+        with st.expander("📈 Estadísticas de sesión"):
+            st.write(f"**Inicio de sesión:** {st.session_state.estadisticas['inicio_sesion'].strftime('%H:%M:%S')}")
+            st.write(f"**Procesamientos:** {st.session_state.estadisticas['total_procesamientos']}")
+            st.write(f"**Errores:** {st.session_state.estadisticas['errores']}")
+            st.write(f"**Tiempo activo:** {(datetime.now() - st.session_state.estadisticas['inicio_sesion']).seconds // 60} min")
+        
+        # Botones de gestión
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🗑️ Limpiar historial", key="btn_limpiar", use_container_width=True):
+                st.session_state.detecciones_historial = []
+                st.session_state.resultado_actual = None
+                st.session_state.texto_placa_actual = ""
+                st.session_state.recortes_placas = []
+                st.session_state.tracker = SimpleTracker(max_age=30)
+                st.success("Historial limpiado")
+                time.sleep(1)
+                st.rerun()
+        
+        with col2:
+            if st.button("💾 Exportar JSON", key="btn_exportar", use_container_width=True):
+                datos_json = generar_datos_json()
+                json_str = json.dumps(datos_json, indent=2, ensure_ascii=False)
+                
+                st.download_button(
+                    label="📥 Descargar JSON",
+                    data=json_str,
+                    file_name=f"resumen_detecciones_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    key="download_json"
+                )
     
     # Layout principal con tabs
-    tab1, tab2, tab3 = st.tabs(["📸 Cargar Imagen", "🌴 Detectar Frutas", "🚗 Detectar Placas"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📸 Cargar Imagen", "🌴 Detectar Frutas", "🚗 Detectar Placas", "📊 Dashboard"])
     
     with tab1:
         st.header("📸 Cargar imagen")
@@ -498,7 +628,7 @@ def main():
         if metodo == "📁 Subir archivo":
             archivo = st.file_uploader(
                 "Selecciona una imagen",
-                type=['jpg', 'jpeg', 'png'],
+                type=['jpg', 'jpeg', 'png', 'bmp'],
                 key="uploader_imagen"
             )
             if archivo is not None:
@@ -507,8 +637,10 @@ def main():
                     imagen = cv2.cvtColor(np.array(imagen_pil), cv2.COLOR_RGB2BGR)
                     st.session_state.imagen_actual = imagen
                     imagen_cargada = True
+                    st.success(f"✅ Imagen cargada: {archivo.name}")
                 except Exception as e:
-                    st.error(f"Error cargando imagen: {str(e)}")
+                    st.error(f"❌ Error cargando imagen: {str(e)}")
+                    st.session_state.estadisticas["errores"] += 1
         
         elif metodo == "📷 Cámara web":
             st.info("📱 Este método funciona perfectamente en dispositivos móviles")
@@ -521,8 +653,10 @@ def main():
                     st.session_state.imagen_actual = imagen
                     imagen_cargada = True
                     st.success("✅ Imagen capturada correctamente")
+                    st.session_state.estadisticas["total_procesamientos"] += 1
                 except Exception as e:
                     st.error(f"❌ Error procesando imagen: {str(e)}")
+                    st.session_state.estadisticas["errores"] += 1
         
         elif metodo == "🎥 Cámara RTSP (Báscula)":
             st.subheader("🎥 Configuración de Cámara RTSP")
@@ -541,7 +675,7 @@ def main():
             with col2:
                 st.write("")
                 st.write("")
-                if st.button("💾 Guardar URL", key="btn_save_rtsp"):
+                if st.button("💾 Guardar URL", key="btn_save_rtsp", use_container_width=True):
                     st.session_state.rtsp_url = rtsp_url
                     st.success("✅ URL guardada")
             
@@ -563,11 +697,12 @@ def main():
                 
                 if usar_roi:
                     st.session_state.roi_coords = [x_start, y_start, x_end, y_end]
+                    st.info(f"ROI configurado: ({x_start}, {y_start}) a ({x_end}, {y_end})")
                 else:
                     st.session_state.roi_coords = None
             
             # Botones de captura
-            col1, col2, col3 = st.columns([1, 1, 1])
+            col1, col2, col3 = st.columns([1, 2, 1])
             
             with col2:
                 if st.button("📸 Capturar Frame", type="primary", key="btn_capturar_rtsp", use_container_width=True):
@@ -582,15 +717,58 @@ def main():
                             
                             if error:
                                 st.error(f"❌ {error}")
+                                st.session_state.estadisticas["errores"] += 1
                             else:
                                 st.session_state.imagen_actual = frame
                                 imagen_cargada = True
                                 st.success("✅ Frame capturado exitosamente")
+                                st.session_state.estadisticas["total_procesamientos"] += 1
+                
+                # Procesamiento automático
+                if st.session_state.procesamiento_automatico and st.session_state.rtsp_url:
+                    if st.button("🔄 Procesamiento Continuo", key="btn_continuo", use_container_width=True):
+                        placeholder = st.empty()
+                        for i in range(5):  # Procesar 5 frames
+                            with placeholder.container():
+                                st.info(f"Procesando frame {i+1}/5...")
+                                frame, error = capturar_frame_rtsp(
+                                    st.session_state.rtsp_url,
+                                    st.session_state.roi_coords
+                                )
+                                if frame is not None:
+                                    st.session_state.imagen_actual = frame
+                                    # Procesar automáticamente
+                                    tracks = procesar_frame_con_tracking(
+                                        modelo_placas,
+                                        frame,
+                                        st.session_state.tracker,
+                                        confianza
+                                    )
+                                    if tracks:
+                                        st.success(f"Frame {i+1}: {len(tracks)} placas detectadas")
+                                time.sleep(2)
         
         # Mostrar imagen actual
         if st.session_state.imagen_actual is not None:
             st.subheader("🖼️ Imagen cargada")
+            
+            # Mostrar información de la imagen
+            height, width, channels = st.session_state.imagen_actual.shape
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Ancho", f"{width} px")
+            with col2:
+                st.metric("Alto", f"{height} px")
+            with col3:
+                st.metric("Canales", channels)
+            
             st.image(st.session_state.imagen_actual, channels="BGR", use_column_width=True)
+            
+            # Botón para descargar imagen original
+            if st.button("📥 Descargar imagen original", key="btn_descargar_original"):
+                imagen_base64 = convertir_imagen_a_base64(st.session_state.imagen_actual)
+                href = f'<a href="data:image/jpeg;base64,{imagen_base64}" download="imagen_original_{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg">Descargar imagen</a>'
+                st.markdown(href, unsafe_allow_html=True)
     
     with tab2:
         st.header("🌴 Detección de Frutas")
@@ -598,7 +776,7 @@ def main():
         if st.session_state.imagen_actual is None:
             st.warning("⚠️ Primero carga una imagen en la pestaña 'Cargar Imagen'")
         else:
-            col1, col2, col3 = st.columns([1, 1, 1])
+            col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
                 if st.button("🔍 Detectar Frutas", type="primary", key="btn_frutas", use_container_width=True):
                     with st.spinner("🧠 Analizando frutas..."):
@@ -611,23 +789,40 @@ def main():
                         if detecciones and img_resultado is not None:
                             st.session_state.resultado_actual = img_resultado
                             st.session_state.detecciones_historial.extend(detecciones)
+                            st.session_state.estadisticas["total_procesamientos"] += 1
                             
                             st.success(f"✅ {len(detecciones)} frutas detectadas")
+                            
+                            # Mostrar resumen rápido
+                            clases_detectadas = set([d['clase'] for d in detecciones])
+                            st.info(f"📋 Clases detectadas: {', '.join(clases_detectadas)}")
                         else:
                             st.warning("🔍 No se detectaron frutas con la confianza especificada")
             
             # Mostrar resultados de frutas
             if st.session_state.resultado_actual is not None:
                 st.subheader("🎯 Resultado de la detección")
+                
+                # Mostrar imagen con detecciones
                 st.image(st.session_state.resultado_actual, channels="BGR", use_column_width=True)
                 
                 # Obtener solo las detecciones de frutas más recientes
                 frutas_detectadas = [d for d in st.session_state.detecciones_historial if d.get('tipo') == 'fruta']
                 if frutas_detectadas:
+                    # Mostrar tabla de detecciones
+                    with st.expander("📋 Detalles de detecciones"):
+                        df_frutas = pd.DataFrame(frutas_detectadas)
+                        st.dataframe(df_frutas[['clase', 'confianza', 'timestamp']], use_container_width=True)
+                    
                     # Mostrar gráfico
                     fig = crear_grafico_frutas(frutas_detectadas)
                     if fig:
                         st.plotly_chart(fig, use_container_width=True, key="grafico_frutas")
+                    
+                    # Gráfico de confianza
+                    fig_conf = crear_grafico_confianza(frutas_detectadas, 'fruta')
+                    if fig_conf:
+                        st.plotly_chart(fig_conf, use_container_width=True, key="grafico_confianza_frutas")
     
     with tab3:
         st.header("🚗 Detección de Placas")
@@ -635,7 +830,7 @@ def main():
         if st.session_state.imagen_actual is None:
             st.warning("⚠️ Primero carga una imagen en la pestaña 'Cargar Imagen'")
         else:
-            col1, col2, col3 = st.columns([1, 1, 1])
+            col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
                 if st.button("🔍 Detectar Placas", type="primary", key="btn_placas", use_container_width=True):
                     with st.spinner("🧠 Analizando placas con tracking..."):
@@ -660,18 +855,22 @@ def main():
                                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                                 
                                 # Extraer y guardar recorte en memoria
-                                recorte = extraer_recorte_placa(st.session_state.imagen_actual, (x1, y1, x2, y2))
+                                recorte = extraer_recorte_placa(st.session_state.imagen_actual, (x1, y1, x2, y2), padding_placas)
                                 
                                 recorte_data = {
                                     'id': track_id,
                                     'imagen': recorte,
                                     'confianza': conf,
-                                    'timestamp': datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    'timestamp': datetime.now().strftime("%Y%m%d_%H%M%S"),
+                                    'bbox': (x1, y1, x2, y2)
                                 }
                                 
-                                st.session_state.recortes_placas.append(recorte_data)
+                                # Evitar duplicados
+                                if not any(r['id'] == track_id for r in st.session_state.recortes_placas):
+                                    st.session_state.recortes_placas.append(recorte_data)
                             
                             st.session_state.resultado_actual = img_resultado
+                            st.session_state.estadisticas["total_procesamientos"] += 1
                             st.success(f"✅ {len(tracks)} placa(s) detectada(s) y guardada(s) en memoria")
                         else:
                             st.warning("🔍 No se detectaron placas con la confianza especificada")
@@ -680,6 +879,103 @@ def main():
             if st.session_state.resultado_actual is not None:
                 st.subheader("🎯 Resultado de la detección")
                 st.image(st.session_state.resultado_actual, channels="BGR", use_column_width=True)
+    
+    with tab4:
+        st.header("📊 Dashboard de Análisis")
+        
+        if not st.session_state.detecciones_historial:
+            st.warning("⚠️ No hay datos de detecciones para mostrar. Realiza algunas detecciones primero.")
+        else:
+            # Resumen ejecutivo
+            st.subheader("📈 Resumen Ejecutivo")
+            resumen = crear_resumen_ejecucion()
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Detecciones", resumen["total_detecciones"])
+            with col2:
+                st.metric("Frutas Detectadas", resumen["frutas_detectadas"])
+            with col3:
+                st.metric("Placas Detectadas", resumen["placas_detectadas"])
+            with col4:
+                st.metric("Confianza Promedio", resumen["confianza_promedio"])
+            
+            # Gráficos principales
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig_frutas = crear_grafico_frutas(st.session_state.detecciones_historial)
+                if fig_frutas:
+                    st.plotly_chart(fig_frutas, use_container_width=True)
+                else:
+                    st.info("No hay datos de frutas para graficar")
+            
+            with col2:
+                fig_temporal = crear_grafico_temporal(st.session_state.detecciones_historial)
+                if fig_temporal:
+                    st.plotly_chart(fig_temporal, use_container_width=True)
+                else:
+                    st.info("No hay suficientes datos para gráfico temporal")
+            
+            # Análisis detallado
+            st.subheader("🔍 Análisis Detallado")
+            
+            with st.expander("📋 Historial Completo de Detecciones"):
+                df_completo = pd.DataFrame(st.session_state.detecciones_historial)
+                st.dataframe(df_completo, use_container_width=True)
+                
+                # Opciones de filtrado
+                col1, col2 = st.columns(2)
+                with col1:
+                    filtro_tipo = st.selectbox("Filtrar por tipo:", ["Todos", "fruta", "placa"])
+                with col2:
+                    filtro_confianza = st.slider("Confianza mínima:", 0.0, 1.0, 0.0, 0.1)
+                
+                # Aplicar filtros
+                df_filtrado = df_completo.copy()
+                if filtro_tipo != "Todos":
+                    df_filtrado = df_filtrado[df_filtrado['tipo'] == filtro_tipo]
+                df_filtrado = df_filtrado[df_filtrado['confianza'] >= filtro_confianza]
+                
+                st.metric("Detecciones filtradas", len(df_filtrado))
+            
+            # Exportación de datos
+            st.subheader("💾 Exportación de Datos")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📊 Exportar CSV", key="btn_export_csv"):
+                    df_completo = pd.DataFrame(st.session_state.detecciones_historial)
+                    csv = df_completo.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Descargar CSV",
+                        data=csv,
+                        file_name=f"detecciones_completas_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv",
+                        key="download_csv"
+                    )
+            
+            with col2:
+                if st.button("📷 Exportar Imágenes", key="btn_export_imgs"):
+                    if st.session_state.resultado_actual is not None:
+                        imagen_base64 = convertir_imagen_a_base64(st.session_state.resultado_actual)
+                        href = f'<a href="data:image/jpeg;base64,{imagen_base64}" download="resultado_deteccion_{datetime.now().strftime("%Y%m%d_%H%M%S")}.jpg">Descargar imagen resultado</a>'
+                        st.markdown(href, unsafe_allow_html=True)
+                    else:
+                        st.warning("No hay imagen de resultado para exportar")
+            
+            with col3:
+                if st.button("📋 Reporte Ejecutivo", key="btn_reporte"):
+                    datos_json = generar_datos_json()
+                    json_str = json.dumps(datos_json, indent=2, ensure_ascii=False)
+                    
+                    st.download_button(
+                        label="📥 Descargar Reporte JSON",
+                        data=json_str,
+                        file_name=f"reporte_ejecutivo_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        key="download_reporte"
+                    )
     
     # Sección de recortes guardados en memoria
     if st.session_state.recortes_placas:
@@ -692,7 +988,8 @@ def main():
         cols = st.columns(4)
         for idx, recorte_data in enumerate(st.session_state.recortes_placas):
             with cols[idx % 4]:
-                st.image(recorte_data['imagen'], channels="BGR", caption=f"ID: {recorte_data['id']}")
+                st.image(recorte_data['imagen'], channels="BGR", 
+                        caption=f"ID: {recorte_data['id']} - Conf: {recorte_data['confianza']:.2f}")
                 
                 # Botón de descarga individual
                 _, buffer = cv2.imencode('.jpg', recorte_data['imagen'])
@@ -725,3 +1022,17 @@ def main():
                     mime="application/zip",
                     key="download_zip_crops"
                 )
+
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center; color: gray;'>
+            🚀 Sistema Dual CNN - Desarrollado con Streamlit, YOLO y OpenCV
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+if __name__ == "__main__":
+    main()

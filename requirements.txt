@@ -1,5 +1,6 @@
 streamlit
 opencv-python-headless
+opencv-contrib-python-headless
 numpy
 Pillow
 gdown

@@ -28,20 +28,9 @@ def descargar_y_cargar_modelo_frutas():
     if not os.path.exists(ruta_modelo):
         st.info("📥 Descargando modelo de frutas...") 
         url = "https://drive.google.com/uc?id=16BNxvPRSwUQEKULlgKhG2jRUyUNnSApu"
-        try:
-            gdown.download(url, ruta_modelo, quiet=False)
-            st.success("✅ Modelo de frutas descargado correctamente")
-        except Exception as e:
-            st.error(f"❌ Error descargando modelo de frutas: {str(e)}")
-            return None
+        gdown.download(url, ruta_modelo, quiet=False)
     
-    try:
-        modelo = YOLO(ruta_modelo)
-        st.success("✅ Modelo de frutas cargado correctamente")
-        return modelo
-    except Exception as e:
-        st.error(f"❌ Error cargando modelo de frutas: {str(e)}")
-        return None
+    return YOLO(ruta_modelo)
 
 @st.cache_resource
 def descargar_y_cargar_modelo_placas():
@@ -50,20 +39,9 @@ def descargar_y_cargar_modelo_placas():
     if not os.path.exists(ruta_modelo):
         st.info("📥 Descargando modelo de placas...")
         url = "https://drive.google.com/uc?id=12KSiZvxS262NPQ1s-hdsOxJliHSMS3tS"
-        try:
-            gdown.download(url, ruta_modelo, quiet=False)
-            st.success("✅ Modelo de placas descargado correctamente")
-        except Exception as e:
-            st.error(f"❌ Error descargando modelo de placas: {str(e)}")
-            return None
+        gdown.download(url, ruta_modelo, quiet=False)
     
-    try:
-        modelo = YOLO(ruta_modelo)
-        st.success("✅ Modelo de placas cargado correctamente")
-        return modelo
-    except Exception as e:
-        st.error(f"❌ Error cargando modelo de placas: {str(e)}")
-        return None
+    return YOLO(ruta_modelo)
 
 # Diccionario para caracteres de placas
 ID_TO_CHAR = {
@@ -1036,3 +1014,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

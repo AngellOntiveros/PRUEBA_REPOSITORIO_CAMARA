@@ -10,7 +10,7 @@ torch
 torchvision
 scikit-learn
 scikit-image
-opencv-python
+
 
 
 

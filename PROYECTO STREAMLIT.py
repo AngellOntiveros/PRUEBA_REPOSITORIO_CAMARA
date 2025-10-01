@@ -121,11 +121,7 @@ class SimpleTracker:
 
 class RTSPCaptureSystem:
     def __init__(self, model_path, rtsp_url, roi=None):
-        st.write("🔍 INICIANDO DEBUG RTSP...")
-        st.write(f"📡 URL: {rtsp_url}")
-        st.write(f"🔧 OpenCV version: {cv2.__version__}")
-        
-        # Configuración exacta de tu script
+        # ✅ CONFIGURACIÓN EXACTA DE TU SCRIPT ORIGINAL
         self.CONFIDENCE_THRESHOLD = 0.4
         self.SAVE_INTERVAL = 30
         self.MIN_PLATE_AREA = 1000
@@ -133,6 +129,7 @@ class RTSPCaptureSystem:
         self.MAX_SAVES_PER_TRACK = 2
         
         self.roi = roi if roi else None
+        
         self.tracker = SimpleTracker(max_age=30)
         self.track_history = defaultdict(lambda: deque(maxlen=10))
         self.saved_tracks = set()
@@ -142,61 +139,22 @@ class RTSPCaptureSystem:
         self.detection_count = 0
         self.track_count = 0
         
-        # DEBUG 1: Verificar que OpenCV tiene soporte RTSP
-        st.write("🔍 Verificando capacidades de OpenCV...")
-        backends = cv2.videoio_registry.getBackends()
-        st.write(f"Backends disponibles: {backends}")
-        
-        # DEBUG 2: Probar diferentes métodos de conexión
-        self.cap = cv2.VideoCapture()
-        
-        # Método 1: Configuración exacta de tu script
-        st.write("🔄 MÉTODO 1: Configuración exacta de tu script...")
+        # ✅ CONFIGURACIÓN EXACTA DE VIDEO CAPTURE
+        st.info("Conectando a cámara RTSP...")
         self.cap = cv2.VideoCapture(rtsp_url)
+        
+        # ✅ ESTAS SON LAS LÍNEAS CLAVE DE TU SCRIPT
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        st.write(f"📊 Estado después de método 1: {self.cap.isOpened()}")
-        
         if not self.cap.isOpened():
-            # Método 2: Con open() explícito
-            st.write("🔄 MÉTODO 2: Usando open() explícito...")
-            self.cap = cv2.VideoCapture()
-            success = self.cap.open(rtsp_url)
-            st.write(f"open() retornó: {success}")
-            st.write(f"isOpened(): {self.cap.isOpened()}")
+            raise ConnectionError(f"No se pudo conectar a la cámara RTSP: {rtsp_url}")
         
-        if not self.cap.isOpened():
-            # Método 3: Con timeout
-            st.write("🔄 MÉTODO 3: Con configuración de timeout...")
-            self.cap = cv2.VideoCapture()
-            self.cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 10000)
-            success = self.cap.open(rtsp_url)
-            st.write(f"Con timeout - open() retornó: {success}")
-            st.write(f"Con timeout - isOpened(): {self.cap.isOpened()}")
+        st.success("✅ Cámara RTSP conectada exitosamente")
         
-        # DEBUG 3: Intentar leer un frame si está abierto
-        if self.cap.isOpened():
-            st.write("✅ CONEXIÓN ESTABLECIDA - Intentando leer frame...")
-            ret, frame = self.cap.read()
-            st.write(f"📸 read() retornó: {ret}")
-            st.write(f"📏 Frame shape: {frame.shape if ret else 'None'}")
-            
-            if ret:
-                st.success("🎉 ¡FUNCIONA! Se pudo conectar y leer frame")
-            else:
-                st.warning("⚠️ Conexión establecida pero no se pudo leer frame")
-        else:
-            st.error("❌ FALLÓ TODOS LOS MÉTODOS DE CONEXIÓN")
-            st.write("📋 Información adicional:")
-            st.write(f"- Backends: {cv2.videoio_registry.getBackends()}")
-            st.write(f"- Build info: {cv2.getBuildInformation()[:500]}...")  # Primeros 500 chars
-            
-            raise ConnectionError(f"No se pudo conectar a la cámara RTSP después de 3 métodos")
-        
-        # Cargar modelo
-        st.write("🧠 Cargando modelo YOLO...")
+        # ✅ CARGAR MODELO EXACTAMENTE COMO EN TU SCRIPT
+        st.info("Cargando modelo de detección de placas...")
         try:
             self.model = YOLO(model_path)
             st.success("✅ Modelo cargado exitosamente")
@@ -209,10 +167,229 @@ class RTSPCaptureSystem:
             st.info(f"✅ Directorio creado: {self.OUTPUT_DIR}")
         
         if self.roi:
+            self._validate_roi()
             st.info(f"✅ ROI configurado: {self.roi}")
-        
+        else:
+            st.info("ℹ ROI no configurado, se usará todo el frame")
+
         self.is_running = False
         self.current_frame = None
+
+    def _validate_roi(self):
+        x_start, y_start, x_end, y_end = self.roi
+        if x_start >= x_end or y_start >= y_end:
+            raise ValueError("ROI inválido")
+
+    def _apply_roi(self, frame):
+        if self.roi is None:
+            return frame, (0, 0)
+        
+        x_start, y_start, x_end, y_end = self.roi
+        roi_frame = frame[y_start:y_end, x_start:x_end]
+        
+        if roi_frame.size == 0:
+            raise ValueError("ROI resultó en frame vacío")
+        
+        return roi_frame, (x_start, y_start)
+
+    def _should_save_plate(self, track_id, confidence):
+        for track in self.tracker.tracks:
+            if track['id'] == track_id:
+                if track.get('save_count', 0) >= self.MAX_SAVES_PER_TRACK:
+                    return False
+                
+                frames_since_last_save = self.frame_count - track.get('last_save_frame', 0)
+                if frames_since_last_save < 60:
+                    return False
+                
+                if confidence < 0.6:
+                    return False
+                
+                return True
+        return False
+
+    def _save_plate(self, frame, bbox, track_id, confidence):
+        x1, y1, x2, y2 = bbox
+        
+        padding = 15
+        x1 = max(0, x1 - padding)
+        y1 = max(0, y1 - padding)
+        x2 = min(frame.shape[1], x2 + padding)
+        y2 = min(frame.shape[0], y2 + padding)
+        
+        plate_crop = frame[y1:y2, x1:x2]
+        
+        if plate_crop.size == 0:
+            return False
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"placa_ID{track_id}_{timestamp}.jpg"
+        filepath = os.path.join(self.OUTPUT_DIR, filename)
+        
+        success = cv2.imwrite(filepath, plate_crop)
+        if success:
+            self.save_count += 1
+            
+            for track in self.tracker.tracks:
+                if track['id'] == track_id:
+                    track['save_count'] = track.get('save_count', 0) + 1
+                    track['last_save_frame'] = self.frame_count
+                    break
+            
+            st.info(f"✅ Placa ID:{track_id} guardada (Total: {self.save_count})")
+            return True
+        
+        return False
+
+    def process_frame(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            st.warning("⚠ Error leyendo frame, reintentando...")
+            return None
+        
+        self.frame_count += 1
+        
+        try:
+            roi_frame, (x_offset, y_offset) = self._apply_roi(frame)
+            
+            # ✅ DETECCIÓN EXACTA COMO EN TU SCRIPT
+            results = self.model(roi_frame, conf=self.CONFIDENCE_THRESHOLD, verbose=False)
+            
+            detections = []
+            
+            for result in results:
+                if result.boxes is None or len(result.boxes) == 0:
+                    continue
+                    
+                for box in result.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
+                    confidence = float(box.conf[0].cpu().numpy())
+                    
+                    area = (x2 - x1) * (y2 - y1)
+                    if area < self.MIN_PLATE_AREA:
+                        continue
+                    
+                    abs_x1 = x1 + x_offset
+                    abs_y1 = y1 + y_offset
+                    abs_x2 = x2 + x_offset
+                    abs_y2 = y2 + y_offset
+                    
+                    detections.append((abs_x1, abs_y1, abs_x2, abs_y2, confidence))
+                    self.detection_count += 1
+            
+            # Tracking
+            tracks = self.tracker.update(detections)
+            
+            # Procesar tracks
+            for track in tracks:
+                x1, y1, x2, y2, confidence, track_id = track
+                
+                if track_id > self.track_count:
+                    self.track_count = track_id
+                
+                # Actualizar historial
+                center_x = (x1 + x2) / 2
+                center_y = (y1 + y2) / 2
+                self.track_history[track_id].append((center_x, center_y))
+                
+                # COLORES INTELIGENTES SEGÚN ESTADO
+                if track_id in self.saved_tracks:
+                    color = (255, 0, 0)  # AZUL: Ya guardado
+                elif self._should_save_plate(track_id, confidence):
+                    color = (0, 255, 0)  # VERDE: Listo para guardar
+                else:
+                    color = (0, 165, 255)  # NARANJA: En proceso
+                
+                # Dibujar bounding box
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+                
+                # Información del track
+                track_info = f"ID:{track_id}"
+                
+                save_count = 0
+                for t in self.tracker.tracks:
+                    if t['id'] == track_id:
+                        save_count = t.get('save_count', 0)
+                        break
+                
+                if save_count > 0:
+                    track_info += f" | Save:{save_count}/{self.MAX_SAVES_PER_TRACK}"
+                else:
+                    track_info += f" | {confidence:.2f}"
+                
+                # Fondo para texto
+                text_size = cv2.getTextSize(track_info, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                cv2.rectangle(frame, 
+                            (x1, y1 - text_size[1] - 10),
+                            (x1 + text_size[0] + 10, y1),
+                            color, -1)
+                
+                cv2.putText(frame, track_info, (x1, y1 - 5),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                
+                # Dibujar trayectoria
+                if track_id in self.track_history:
+                    points = np.array(self.track_history[track_id], dtype=np.int32)
+                    if len(points) > 1:
+                        cv2.polylines(frame, [points], False, color, 2)
+                
+                # GUARDADO AUTOMÁTICO INTELIGENTE
+                if (self.frame_count % self.SAVE_INTERVAL == 0 and 
+                    self._should_save_plate(track_id, confidence)):
+                    
+                    if self._save_plate(frame, (x1, y1, x2, y2), track_id, confidence):
+                        self.saved_tracks.add(track_id)
+            
+            # Dibujar ROI
+            if self.roi:
+                x_start, y_start, x_end, y_end = self.roi
+                cv2.rectangle(frame, (x_start, y_start), (x_end, y_end), (0, 0, 255), 2)
+                cv2.putText(frame, "ROI", (x_start, y_start - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            
+            # Información en pantalla
+            info_lines = [
+                f"Tracks: {len(tracks)}",
+                f"Frames: {self.frame_count}",
+                f"Guardadas: {self.save_count}",
+                f"Tracks Únicos: {self.track_count}",
+                f"FPS: {self.cap.get(cv2.CAP_PROP_FPS):.1f}"
+            ]
+            
+            y_offset = 30
+            for i, line in enumerate(info_lines):
+                cv2.putText(frame, line, (10, y_offset + i * 25),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            
+            self.current_frame = frame
+            return frame
+            
+        except Exception as e:
+            st.error(f"⚠ Error procesando frame: {e}")
+            return None
+
+    def start_capture(self):
+        self.is_running = True
+        st.success("🎥 Iniciando captura RTSP...")
+
+    def stop_capture(self):
+        self.is_running = False
+        if self.cap.isOpened():
+            self.cap.release()
+        st.info("🛑 Captura RTSP detenida")
+
+    def get_stats(self):
+        return {
+            'frames_procesados': self.frame_count,
+            'placas_guardadas': self.save_count,
+            'tracks_activos': len(self.tracker.tracks),
+            'detecciones_totales': self.detection_count
+        }
+
+    def get_saved_plates_count(self):
+        if os.path.exists(self.OUTPUT_DIR):
+            return len([f for f in os.listdir(self.OUTPUT_DIR) if f.endswith('.jpg')])
+        return 0
 
     # ... el resto de los métodos igual ...
 # ----------------------------
@@ -788,6 +965,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
